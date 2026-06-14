@@ -1,0 +1,17 @@
+{
+  "name": "vaultx-render-api",
+  "version": "1.0.0",
+  "description": "VaultX Email API for Render.com",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": "22"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "node-fetch": "^2.7.0"
+  }
+}
