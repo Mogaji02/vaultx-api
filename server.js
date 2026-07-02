@@ -9,7 +9,10 @@ const PORT = process.env.PORT || 10000;
 // CONFIGURATION
 // ==========================================
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "re_hCDRpzaV_5ugSAwtg6yB6qJ9xk6Qbaw87";
-const FROM_EMAIL = "VaultX <noreply@vaultxwallet.website>";
+// IMPORTANT: Use notifications@ for transactional emails (better deliverability)
+// You MUST verify vaultxwallet.website in Resend dashboard and add DNS records
+const FROM_EMAIL = "VaultX <notifications@vaultxwallet.website>";
+const REPLY_TO_EMAIL = "VaultX Support <support@vaultxwallet.website>";
 const WEBSITE_URL = "https://vaultxwallet.website";
 const ALLOWED_ORIGINS = [
   "https://vaultxwallet.website",
@@ -53,11 +56,18 @@ app.get('/health', (req, res) => {
 // ==========================================
 app.post('/send-email', async (req, res) => {
   try {
-    const { to, subject, message, html, text, websiteUrl } = req.body;
+    const { to, subject, message, html, text, websiteUrl, emailType, category } = req.body;
 
     if (!to || !subject || !message) {
       return res.status(400).json({ error: 'Missing required fields: to, subject, message' });
     }
+
+    // Determine email type for headers
+    const isTransactional = emailType === 'transactional' || 
+                           category === 'deposit' || 
+                           category === 'withdrawal' ||
+                           category === 'password_reset' ||
+                           category === 'notification';
 
     // Build HTML if not provided
     const finalHtml = html || `<!DOCTYPE html>
@@ -85,7 +95,35 @@ app.post('/send-email', async (req, res) => {
 </body>
 </html>`;
 
-    const finalText = text || (message + `\n\nOpen your wallet: ${websiteUrl || WEBSITE_URL}\n\nVaultX Secure Crypto Wallet • ${websiteUrl || WEBSITE_URL}\nAutomated message — do not reply.`);
+    const finalText = text || (message + `
+
+Open your wallet: ${websiteUrl || WEBSITE_URL}
+
+VaultX Secure Crypto Wallet • ${websiteUrl || WEBSITE_URL}
+Automated message — do not reply.`);
+
+    // Anti-spam / deliverability headers
+    // NOTE: For best deliverability, verify your domain in Resend dashboard:
+    // 1. Go to https://resend.com/domains
+    // 2. Add "vaultxwallet.website"
+    // 3. Add the DNS records (DKIM, SPF, MX) to your domain registrar
+    // 4. Wait for verification (usually 15 minutes)
+    const emailHeaders = {
+      'X-Priority': '1',
+      'X-Mailer': 'VaultX-Secure-Email/1.0',
+      'X-Auto-Response-Suppress': 'OOF, AutoReply',
+      'Precedence': isTransactional ? 'transactional' : 'bulk',
+      'X-Email-Type': isTransactional ? 'transactional' : 'notification',
+      'X-Category': category || 'general',
+      'Feedback-ID': `vaultx:${category || 'general'}:vaultxwallet`,
+      'X-Entity-Ref-ID': `vaultx-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    };
+
+    // Add List-Unsubscribe only for non-transactional emails
+    if (!isTransactional) {
+      emailHeaders['List-Unsubscribe'] = `<mailto:unsubscribe@vaultxwallet.website?subject=Unsubscribe>, <https://vaultxwallet.website/unsubscribe>`;
+      emailHeaders['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click';
+    }
 
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -98,7 +136,9 @@ app.post('/send-email', async (req, res) => {
         to: to,
         subject: subject,
         html: finalHtml,
-        text: finalText
+        text: finalText,
+        reply_to: REPLY_TO_EMAIL,
+        headers: emailHeaders
       })
     });
 
@@ -109,7 +149,7 @@ app.post('/send-email', async (req, res) => {
     }
 
     const resData = await response.json();
-    console.log('Email sent via Resend:', resData.id, 'to:', to);
+    console.log('Email sent via Resend:', resData.id, 'to:', to, 'type:', isTransactional ? 'transactional' : 'bulk');
     return res.json({ success: true, id: resData.id });
 
   } catch (error) {
